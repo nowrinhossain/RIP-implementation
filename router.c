@@ -9,6 +9,8 @@
 
 #define BUFFER_SIZE 5
 
+int all_ports[3] = {8088, 8089, 8090};
+
 struct send_data_row{
     char destination[20];
     char cost[20];
@@ -17,7 +19,7 @@ struct send_data_row{
 struct arg_struct
 {
     int sock;
-    int neighbor_port;
+    int this_port;
 };
 
 struct arg_struct2
@@ -43,36 +45,50 @@ void create_sending_data(struct send_data_row *list_of_data, int length){
 
 void *sendingThread(void *arguments)
 {
-    struct sockaddr_in  neighbor_node;
-    int neighbor_port;
-    int client_fd, sock;
+    FILE *fptr;
+    fptr = fopen("sending-thread.txt", "w");
+    fprintf(fptr,"In sending thread!!!!");
 
     struct arg_struct *args = arguments;
+    int sock, this_node_port;
     sock = args->sock;
-    neighbor_port = args->neighbor_port;
+    this_node_port = args->this_port;
 
-    neighbor_node.sin_addr.s_addr = INADDR_ANY;
-    neighbor_node.sin_family = AF_INET;
-    neighbor_node.sin_port = htons(neighbor_port);
+    fprintf(fptr, "This node port %d\n", this_node_port);
 
 
-    while(1){
+    for(int i=0;i<3; i++){
 
 
+        struct sockaddr_in  neighbor_node;
+        int neighbor_port;
+        int client_fd;
 
-        if ((client_fd
-            = connect(sock, (struct sockaddr*)&neighbor_node,
-                    sizeof(neighbor_node)))
-            < 0) {
-            printf("\nConnection Failed \n");
-            //return -1;
-        }else{
-            printf("\nConnection established from to port %d", neighbor_port);
-            send(sock, "Hellooooooooo", strlen("Hellooooooooo"), 0);
-            break;
-
+        if(all_ports[i]==this_node_port){
+            continue;
         }
-	}
+        neighbor_port = all_ports[i];
+        neighbor_node.sin_addr.s_addr = INADDR_ANY;
+        neighbor_node.sin_family = AF_INET;
+        neighbor_node.sin_port = htons(neighbor_port);
+
+        fprintf(fptr, "port %d is trying to connect to port %d\n",this_node_port, neighbor_port);
+
+        while(1){
+
+            if ((client_fd = connect(sock, (struct sockaddr*)&neighbor_node, sizeof(neighbor_node))) < 0) {
+                printf("\nConnection Failed \n");
+                continue;
+                //return -1;
+            }else{
+                printf("\nConnection established from to port %d", neighbor_port);
+                send(sock, "Hellooooooooo", strlen("Hellooooooooo"), 0);
+                break;
+
+            }
+        }
+    }
+
 
     return NULL;
 }
@@ -85,7 +101,7 @@ void *recievingThread(void *arguments)
     this_node = args->this_node;
     server_fd = args->server_fd;
     int valread, addrlen = sizeof(this_node);
-    	char buffer[1024] = { 0 };
+    char buffer[1024] = { 0 };
 
 
 
@@ -110,13 +126,13 @@ void *recievingThread(void *arguments)
 
 int main(int argc, char *argv[] ){
 
-    int all_ports[5] = {8088, 8089, 8090};
+    int all_ports[] = {8088, 8089, 8090};
 
     int id = atoi(argv[1]);
     int port = atoi(argv[2]);
     //int other_port = atoi(argv[3]);
 
-    printf("%d %d", id, port);
+    printf("node-id: %d, port: %d\n", id, port);
     char buffer[1024] = { 0 };
     int new_socket, valread, client_fd;
     int opt = 1;
@@ -142,17 +158,16 @@ int main(int argc, char *argv[] ){
 
     struct arg_struct *args = malloc(sizeof (struct arg_struct));
     args->sock = server_fd;
-    args->neighbor_port = all_ports[i] ;
-    //printf("%d", sending_thread_id);
-    //printf("%d",&sendingThread);
-    //pthread_create(&sending_thread_id, NULL, &sendingThread, args);
-    if (pthread_create(&sending_thread_id, NULL, &sendingThread, args) != 0)
-    {
-          printf("Uh-oh!\n");
-          return -1;
-    }
+    args->this_port = port ;
 
-    struct arg_struct2 *args2 = malloc(sizeof (struct arg_struct));
+    printf("GUUUUNAFIZZZZZ33333!!!!!!\n");
+
+    pthread_create(&sending_thread_id, NULL, sendingThread, args);
+    printf("GUUUUNAFIZZZZZ22222!!!!!!\n");
+
+
+
+    struct arg_struct2 *args2 = malloc(sizeof (struct arg_struct2));
     args2->this_node = node;
     args2->server_fd = server_fd ;
     //pthread_create(&recieving_thread, NULL, &recievingThread, args2);
