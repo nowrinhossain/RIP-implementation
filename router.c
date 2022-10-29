@@ -77,11 +77,11 @@ void *sendingThread(void *arguments)
         while(1){
 
             if ((client_fd = connect(sock, (struct sockaddr*)&neighbor_node, sizeof(neighbor_node))) < 0) {
-                printf("\nConnection Failed \n");
+                fprintf(fptr,"\nConnection Failed \n");
                 continue;
                 //return -1;
             }else{
-                printf("\nConnection established from to port %d", neighbor_port);
+                fprintf(fptr, "\nConnection established from to port %d", neighbor_port);
                 send(sock, "Hellooooooooo", strlen("Hellooooooooo"), 0);
                 break;
 
@@ -95,6 +95,10 @@ void *sendingThread(void *arguments)
 
 void *recievingThread(void *arguments)
 {
+
+    FILE *fptr;
+    fptr = fopen("recieving-thread.txt", "w");
+    fprintf(fptr,"In recieving thread!!!!");
     struct sockaddr_in this_node;
     struct arg_struct2 *args = arguments;
     int server_fd, new_socket;
@@ -106,6 +110,8 @@ void *recievingThread(void *arguments)
 
 
     while(1){
+        fprintf(fptr,"Trying to listen!!!!");
+
         if (listen(server_fd, 3) < 0) {
             perror("listen");
             continue;
@@ -118,7 +124,7 @@ void *recievingThread(void *arguments)
             continue;
         }
         valread = read(new_socket, buffer, 1024);
-        printf("%s\n", buffer);
+        fprintf(fptr,"port: %d %s \n",this_node.sin_port, buffer);
 	}
 
     return NULL;
@@ -170,7 +176,10 @@ int main(int argc, char *argv[] ){
     struct arg_struct2 *args2 = malloc(sizeof (struct arg_struct2));
     args2->this_node = node;
     args2->server_fd = server_fd ;
-    //pthread_create(&recieving_thread, NULL, &recievingThread, args2);
+    pthread_create(&recieving_thread_id, NULL, recievingThread, args2);
+
+    pthread_join(sending_thread_id, NULL);
+    pthread_join(recieving_thread_id, NULL);
 
 
 	/*int i;
