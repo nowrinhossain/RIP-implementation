@@ -12,11 +12,6 @@
 int all_ports[] = {8088, 8089, 8090};
 int PORT;
 
-// struct routing_table_entry{
-//     char destination[50];
-//     int cost;
-//     char next_hop[50];
-// }
 
 struct routing_table_entry
 {
@@ -28,6 +23,26 @@ struct routing_table_entry
 struct routing_table_entry ROUTING_TABLE[10000];
 int ROUTING_TABLE_SIZE;
 
+void print_routing_table(){
+    char routing_table[17];
+    snprintf(routing_table, sizeof(routing_table), "routing_%i.txt\n", PORT);
+    FILE *fptr;
+    fptr = fopen(routing_table, "w");
+
+    fprintf(fptr,"\ndest | cost | next\n");
+    printf("\ndest | cost | next\n");
+
+    int i =0;
+    for (i = 0; i < ROUTING_TABLE_SIZE; i++)
+    {
+        fprintf(fptr,"%s | %d | %s \n", ROUTING_TABLE[i].destination_port, ROUTING_TABLE[i].cost, ROUTING_TABLE[i].next_hop_port);        
+        printf("%s | %d | %s \n", ROUTING_TABLE[i].destination_port, ROUTING_TABLE[i].cost, ROUTING_TABLE[i].next_hop_port);        
+    
+    }
+    fprintf(fptr,"\n\n");
+    printf("\n\n");
+
+}
 
 void initialization_routing_table()
 {
@@ -66,14 +81,54 @@ void initialization_routing_table()
     }
     ROUTING_TABLE_SIZE = entry_count;
     printf("\nInitial routing tabel:\n");
-    int i;
-    for (i = 0; i < entry_count; i++)
-    {
-        printf("%s | %d | %s \n", ROUTING_TABLE[i].destination_port, ROUTING_TABLE[i].cost, ROUTING_TABLE[i].next_hop_port);        
-    }
+    print_routing_table();
+    
     fclose(fptr);
     return;
 }
+
+int get_sender_cost(char * sender_port){
+    int to_sender_cost = 1000000;
+    int i;
+    for(i=0;i<ROUTING_TABLE_SIZE;i++){
+        if(strcmp( ROUTING_TABLE[i].destination_port, sender_port )==0){
+            to_sender_cost = ROUTING_TABLE[i].cost;
+        }
+    }
+    return to_sender_cost;
+}
+
+int update_table(char *sender_port, struct routing_table_entry *incoming_table, int incoming_table_size){
+    int change_made = 0;
+    int i;
+    for(i=0;i<incoming_table_size;i++){
+        int j;
+        for(j=0;j<ROUTING_TABLE_SIZE;j++){
+            if(strcmp(ROUTING_TABLE[j].destination_port,incoming_table[i].destination_port )==0){
+                //get cost of destination i through sender
+                int cost_through_sender = get_sender_cost(sender_port)+incoming_table[i].cost;
+                if(cost_through_sender < ROUTING_TABLE[j].cost){
+                    ROUTING_TABLE[j].cost = cost_through_sender;
+                    strcpy( ROUTING_TABLE[j].next_hop_port, sender_port);
+                    change_made = 1;
+                }
+            }
+        }
+        //that means this destination port not found in current table
+        //so we should entry
+        if(j==ROUTING_TABLE_SIZE){
+            strcpy(ROUTING_TABLE[ROUTING_TABLE_SIZE].destination_port, incoming_table[i].destination_port);
+            ROUTING_TABLE[ROUTING_TABLE_SIZE].cost = get_sender_cost(sender_port)+incoming_table[i].cost;
+            strcpy( ROUTING_TABLE[ROUTING_TABLE_SIZE].next_hop_port, sender_port);
+            ROUTING_TABLE_SIZE++;
+        }
+    }
+    if(change_made==1){
+        print_routing_table();
+    }
+    return change_made;
+}
+
 
 
 char * create_string_of_routing_table(){
@@ -99,12 +154,19 @@ char * create_string_of_routing_table(){
     return whole_data_pointer;
 }
 
-void extract_data(char * data){
+void extract_data_and_update_table(char * data){
     char data_arr[1000];
 
     strcpy(data_arr,data);
 
     char *line = strtok(data_arr, "#");
+
+    char *string,*found,*sender_port;
+    string = strdup(line);
+    sender_port = strsep(&string," ");
+    sender_port = strsep(&string,"-");
+    printf("sender-port: %s\n",sender_port);
+
 
     struct routing_table_entry incoming_routing_table[100];
 
@@ -116,15 +178,29 @@ void extract_data(char * data){
         line = strtok(NULL, "#");
         printf("extracted line: %s\n", line);
         if(line!=NULL){
-            strcpy(incoming_routing_table[incoming_tabl_entry_count].destination_port,strtok(line, "-"));
-            incoming_routing_table[incoming_tabl_entry_count].cost = atoi(strtok(NULL, "-")) ; 
+            
+            // char *string,*found;
+            string = strdup(line);
+            found = strsep(&string,"-");
+            strcpy(incoming_routing_table[incoming_tabl_entry_count].destination_port, found);
+            found = strsep(&string,"-");
+
+            incoming_routing_table[incoming_tabl_entry_count].cost = atoi(found) ; 
+            incoming_tabl_entry_count++;
+
         } 
-        printf("lalalalall");
         
     }
+    printf("incoming data table: \n");
+    for(int i=0;i<incoming_tabl_entry_count;i++){
+        printf("%s | %d\n", incoming_routing_table[i].destination_port, incoming_routing_table[i].cost);
+    }
+
+    update_table(sender_port,incoming_routing_table, incoming_tabl_entry_count);
     return;    
 
 }
+
 
 struct arg_struct
 {
@@ -143,6 +219,7 @@ struct neighbor
 {
     struct sockaddr_in neighbor_node;
     int neighbor_port;
+    char data[10000];
 };
 
 void *cli(void *arguments)
@@ -162,8 +239,10 @@ void *cli(void *arguments)
         printf("Connection established from %d to port %d\n", PORT, neighbor_def->neighbor_port);
 
         char data[1024];
-        snprintf(data, sizeof(data), "Hellooooooooo from %i\n", PORT);
-        send(client_socket, data, strlen(data), 0);
+        printf("sent-data: %s\n",neighbor_def->data);
+        
+        send(client_socket, neighbor_def->data, strlen(neighbor_def->data), 0);
+        
         printf("data sent from %d to port %d\n\n", PORT, neighbor_def->neighbor_port);
         close(client_fd);
         break;
@@ -173,6 +252,7 @@ void *cli(void *arguments)
 
 void *sendingThread(void *arguments)
 {
+    printf("In sending thread!!!!");
 
     struct arg_struct *args = arguments;
     int sock, this_node_port;
@@ -183,7 +263,7 @@ void *sendingThread(void *arguments)
     char file_name[32];
     snprintf(file_name, sizeof(char) * 32, "sending-thread-%i.txt", this_node_port);
     fptr = fopen(file_name, "w");
-    fprintf(fptr, "In sending thread!!!!");
+    
     fprintf(fptr, "This node port %d\n", this_node_port);
     printf("This node port %d\n", this_node_port);
 
@@ -195,6 +275,7 @@ void *sendingThread(void *arguments)
         int i;
         pthread_t client_threads[5];
         int client_thread_count = 0;
+        char * data = create_string_of_routing_table();
         for (i = 0; i < 3; i = i + 1)
         {
 
@@ -223,6 +304,7 @@ void *sendingThread(void *arguments)
             struct neighbor *neighbor_def = malloc(sizeof(struct neighbor));
             neighbor_def->neighbor_node = neighbor_node;
             neighbor_def->neighbor_port = neighbor_port;
+            strcpy(neighbor_def->data, data);
 
             pthread_create(&client_thread_id, NULL, cli, neighbor_def);
             client_threads[client_thread_count++] = client_thread_id;
@@ -264,8 +346,9 @@ void *recievingThread(void *arguments)
             continue;
         }
         printf("accepted\n");
-        valread = read(new_socket, buffer, 1024);
-        printf("port: %d %s \n", this_node.sin_port, buffer);
+        valread = read(new_socket, buffer, 4024);
+        printf("\nIncoming data: %s \n", buffer);
+        extract_data_and_update_table(buffer);
         close(new_socket);
     }
 
@@ -274,6 +357,7 @@ void *recievingThread(void *arguments)
 
 int main(int argc, char *argv[])
 {
+    sleep(3);
 
     int all_ports[] = {8088, 8089, 8090};
 
@@ -284,9 +368,9 @@ int main(int argc, char *argv[])
     printf("node-id: %d, port: %d\n", id, port);
 
     initialization_routing_table();
-    char *data = create_string_of_routing_table();
-    extract_data(data);
-    printf("%s", data);
+    // char *data = create_string_of_routing_table();
+    // printf("data created from table: %s\n", data);
+    // extract_data_and_update_table(data);
 
     char buffer[1024] = {0};
     int new_socket, valread, client_fd;
@@ -316,13 +400,13 @@ int main(int argc, char *argv[])
     struct arg_struct *args = malloc(sizeof(struct arg_struct));
     args->sock = server_fd;
     args->this_port = port;
-    //pthread_create(&sending_thread_id, NULL, sendingThread, args);
+    pthread_create(&sending_thread_id, NULL, sendingThread, args);
 
     struct arg_struct2 *args2 = malloc(sizeof(struct arg_struct2));
     args2->this_node = node;
     args2->server_fd = server_fd;
-    //pthread_create(&recieving_thread_id, NULL, recievingThread, args2);
+    pthread_create(&recieving_thread_id, NULL, recievingThread, args2);
 
-    //pthread_join(sending_thread_id, NULL);
-    //pthread_join(recieving_thread_id, NULL);
+    pthread_join(sending_thread_id, NULL);
+    pthread_join(recieving_thread_id, NULL);
 }
