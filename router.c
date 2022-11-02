@@ -66,7 +66,8 @@ void initialization_routing_table()
     }
     ROUTING_TABLE_SIZE = entry_count;
     printf("\nInitial routing tabel:\n");
-    for (int i = 0; i < entry_count; i++)
+    int i;
+    for (i = 0; i < entry_count; i++)
     {
         printf("%s | %d | %s \n", ROUTING_TABLE[i].destination_port, ROUTING_TABLE[i].cost, ROUTING_TABLE[i].next_hop_port);        
     }
@@ -74,42 +75,55 @@ void initialization_routing_table()
     return;
 }
 
-char *my_strcat(char *strg1, char *strg2)
-{
-    char *start = strg1;
-
-    while(*strg1 != '\0')
-    {
-        strg1++;
-    }
-
-    while(*strg2 != '\0')
-    {
-        *strg1 = *strg2;
-        strg1++;
-        strg2++;
-    }
-
-    *strg1 = '\0';
-    return start;
-}
 
 char * create_string_of_routing_table(){
     
-    char *whole_data_pointer="";
+    char *whole_data_pointer;
     
     char whole_data[100]="";
-        
-    for(int i=0;i<ROUTING_TABLE_SIZE;i++){
+
+    
+    snprintf(whole_data, sizeof(whole_data), "from %i#", PORT);
+    
+    int i; 
+    for(i=0;i<ROUTING_TABLE_SIZE;i++){
         strcat(whole_data, ROUTING_TABLE[i].destination_port);
-        strcat(whole_data, "-");
-        char *coststr;
+        strcat(whole_data, "-");    
+        char coststr[10];
         sprintf(coststr, "%d", ROUTING_TABLE[i].cost);
         strcat(whole_data, coststr);
-        strcat(whole_data, "\n");
+        strcat(whole_data, "#");
+        
     }
     whole_data_pointer = whole_data;
     return whole_data_pointer;
+}
+
+void extract_data(char * data){
+    char data_arr[1000];
+
+    strcpy(data_arr,data);
+
+    char *line = strtok(data_arr, "#");
+
+    struct routing_table_entry incoming_routing_table[100];
+
+    int incoming_tabl_entry_count = 0;
+    
+    while (line != NULL)
+    {
+        
+        line = strtok(NULL, "#");
+        printf("extracted line: %s\n", line);
+        if(line!=NULL){
+            strcpy(incoming_routing_table[incoming_tabl_entry_count].destination_port,strtok(line, "-"));
+            incoming_routing_table[incoming_tabl_entry_count].cost = atoi(strtok(NULL, "-")) ; 
+        } 
+        printf("lalalalall");
+        
+    }
+    return;    
+
 }
 
 struct arg_struct
@@ -213,7 +227,8 @@ void *sendingThread(void *arguments)
             pthread_create(&client_thread_id, NULL, cli, neighbor_def);
             client_threads[client_thread_count++] = client_thread_id;
         }
-        for (int j = 0; j < client_thread_count; j++)
+        int j;
+        for (j = 0; j < client_thread_count; j++)
         {
             pthread_join(client_threads[j], NULL);
         }
@@ -270,6 +285,7 @@ int main(int argc, char *argv[])
 
     initialization_routing_table();
     char *data = create_string_of_routing_table();
+    extract_data(data);
     printf("%s", data);
 
     char buffer[1024] = {0};
