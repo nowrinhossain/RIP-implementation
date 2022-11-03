@@ -192,7 +192,8 @@ void extract_data_and_update_table(char * data){
         
     }
     printf("incoming data table: \n");
-    for(int i=0;i<incoming_tabl_entry_count;i++){
+    int i;
+    for(i=0;i<incoming_tabl_entry_count;i++){
         printf("%s | %d\n", incoming_routing_table[i].destination_port, incoming_routing_table[i].cost);
     }
 
@@ -219,12 +220,12 @@ struct neighbor
 {
     struct sockaddr_in neighbor_node;
     int neighbor_port;
-    char data[10000];
+    char * data;
 };
 
 void *cli(void *arguments)
 {
-    int client_socket = socket(AF_INET, SOCK_STREAM, 0);
+    int client_socket = socket(AF_INET, SOCK_DGRAM, 0);
     struct neighbor *neighbor_def = arguments;
     int client_fd;
 
@@ -241,7 +242,9 @@ void *cli(void *arguments)
         char data[1024];
         printf("sent-data: %s\n",neighbor_def->data);
         
-        send(client_socket, neighbor_def->data, strlen(neighbor_def->data), 0);
+        // send(client_socket, neighbor_def->data, strlen(neighbor_def->data), 0);
+
+        sendto(client_socket, neighbor_def->data, strlen(neighbor_def->data), MSG_CONFIRM, (const struct sockaddr *) &neighbor_def->neighbor_node,  sizeof(neighbor_def->neighbor_node)); 
         
         printf("data sent from %d to port %d\n\n", PORT, neighbor_def->neighbor_port);
         close(client_fd);
@@ -293,7 +296,9 @@ void *sendingThread(void *arguments)
             neighbor_node.sin_family = AF_INET;
             neighbor_node.sin_port = htons(neighbor_port);
 
+            printf("lalallalala\n");
             printf("\nport %d is trying to connect to port %d\n", this_node_port, neighbor_port);
+            printf("sending data: %s\n", data);
 
             if (inet_pton(AF_INET, "127.0.0.1", &neighbor_node.sin_addr) <= 0)
             {
@@ -304,7 +309,9 @@ void *sendingThread(void *arguments)
             struct neighbor *neighbor_def = malloc(sizeof(struct neighbor));
             neighbor_def->neighbor_node = neighbor_node;
             neighbor_def->neighbor_port = neighbor_port;
-            strcpy(neighbor_def->data, data);
+            neighbor_def->data = data;
+            
+            // strcpy(neighbor_def->data, data);
 
             pthread_create(&client_thread_id, NULL, cli, neighbor_def);
             client_threads[client_thread_count++] = client_thread_id;
@@ -330,23 +337,27 @@ void *recievingThread(void *arguments)
     server_fd = args->server_fd;
     int valread, addrlen = sizeof(this_node);
     char buffer[1024] = {0};
+    struct sockaddr_in cliaddr;
 
     while (1)
     {
 
-        if (listen(server_fd, 3) < 0)
-        {
-            perror("listen");
-            continue;
-        }
-        if ((new_socket = accept(server_fd, (struct sockaddr *)&this_node,
-                                 (socklen_t *)&addrlen)) < 0)
-        {
-            perror("accept");
-            continue;
-        }
-        printf("accepted\n");
-        valread = read(new_socket, buffer, 4024);
+        // if (listen(server_fd, 3) < 0)
+        // {
+        //     perror("listen");
+        //     continue;
+        // }
+        // if ((new_socket = accept(server_fd, (struct sockaddr *)&this_node,
+        //                          (socklen_t *)&addrlen)) < 0)
+        // {
+        //     perror("accept");
+        //     continue;
+        // }
+        // printf("accepted\n");
+        // valread = read(new_socket, buffer, 4024);
+        memset(&cliaddr, 0, sizeof(cliaddr)); 
+        int len = sizeof(cliaddr);
+        recvfrom(server_fd, (char *)buffer, 4024,  MSG_WAITALL, ( struct sockaddr *) &cliaddr, &len); 
         printf("\nIncoming data: %s \n", buffer);
         extract_data_and_update_table(buffer);
         close(new_socket);
@@ -375,7 +386,7 @@ int main(int argc, char *argv[])
     char buffer[1024] = {0};
     int new_socket, valread, client_fd;
     int opt = 1;
-    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    int server_fd = socket(AF_INET, SOCK_DGRAM, 0);
     //setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))
     struct sockaddr_in node, neighbor_node;
     struct sockaddr_in neighbors[5];
