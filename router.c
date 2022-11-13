@@ -9,39 +9,63 @@
 
 #define BUFFER_SIZE 5
 
-int all_ports[] = {8088, 8089, 8090};
+int all_ports[] = {8088, 8089, 8090, 8091};
 int PORT;
+char all_hosts[100][100] = {"192.168.1.2", "192.168.2.254", "192.168.9.1"};
+char neighbors[100][100];
+int neighbour_count;
+pthread_mutex_t mut;
+int periodic_timer = 5;
+int entry_expire_thresh = 30;
+int entry_garbage_thresh = 30;
+
+int get_rand_val(){
+    int lower = 0, upper = 1;
+    int num = (rand() % (upper - lower + 1)) + lower;
+    return num;
+}
 
 
 struct routing_table_entry
 {
-    char destination_port[10];
+    char destination_port[5];
     int cost;
-    char next_hop_port[10];
+    char next_hop_port[5];
+    int expiration_time;
+    int garbage_collection_time;
 };
 
 struct routing_table_entry ROUTING_TABLE[10000];
-int ROUTING_TABLE_SIZE;
+int ROUTING_TABLE_SIZE = 0;
 
-void print_routing_table(){
+void print_routing_table()
+{
     char routing_table[17];
     snprintf(routing_table, sizeof(routing_table), "routing_%i.txt\n", PORT);
     FILE *fptr;
-    fptr = fopen(routing_table, "w");
+    fptr = fopen(routing_table, "a");
 
-    fprintf(fptr,"\ndest | cost | next\n");
-    printf("\ndest | cost | next\n");
+    fputs("\ndest | cost | next | exp time | garbage time\n", fptr);
+    printf("\ndest | cost | next | exp time | garbage time\n");
 
-    int i =0;
+    int i = 0;
     for (i = 0; i < ROUTING_TABLE_SIZE; i++)
     {
-        fprintf(fptr,"%s | %d | %s \n", ROUTING_TABLE[i].destination_port, ROUTING_TABLE[i].cost, ROUTING_TABLE[i].next_hop_port);        
-        printf("%s | %d | %s \n", ROUTING_TABLE[i].destination_port, ROUTING_TABLE[i].cost, ROUTING_TABLE[i].next_hop_port);        
-    
+        fprintf(fptr, "%s | %d | %s | %d | %d \n", ROUTING_TABLE[i].destination_port, ROUTING_TABLE[i].cost, ROUTING_TABLE[i].next_hop_port, ROUTING_TABLE[i].expiration_time, ROUTING_TABLE[i].garbage_collection_time);
+        printf("%s | %d | %s | %d | %d \n", ROUTING_TABLE[i].destination_port, ROUTING_TABLE[i].cost, ROUTING_TABLE[i].next_hop_port, ROUTING_TABLE[i].expiration_time, ROUTING_TABLE[i].garbage_collection_time);
     }
-    fprintf(fptr,"\n\n");
+    fprintf(fptr, "\n\n");
     printf("\n\n");
+    fclose(fptr);
+}
 
+void print_neighbours()
+{
+    int i;
+    for (i = 0; i < neighbour_count; i++)
+    {
+        printf("neighbour: %s\n", neighbors[i]);
+    }
 }
 
 void initialization_routing_table()
@@ -57,6 +81,7 @@ void initialization_routing_table()
     char line[50];
 
     int entry_count = 0;
+    neighbour_count = 0;
 
     while (fgets(line, 50, fptr))
     {
@@ -72,136 +97,197 @@ void initialization_routing_table()
             token = strtok(NULL, " ");
             words[i++] = token;
         }
-        
-        strcpy(ROUTING_TABLE[entry_count].destination_port,words[1]);
+        strcpy(neighbors[neighbour_count++], words[1]);
+        strcpy(ROUTING_TABLE[entry_count].destination_port, words[1]);
         ROUTING_TABLE[entry_count].cost = atoi(words[2]);
         strcpy(ROUTING_TABLE[entry_count].next_hop_port, "$");
+        ROUTING_TABLE[entry_count].expiration_time = 0;
+        ROUTING_TABLE[entry_count].garbage_collection_time = 0;
 
         entry_count++;
     }
     ROUTING_TABLE_SIZE = entry_count;
     printf("\nInitial routing tabel:\n");
     print_routing_table();
-    
+
     fclose(fptr);
     return;
 }
 
-int get_sender_cost(char * sender_port){
+void update_neighbour_list(char *sender_port)
+{
+    int i = 0;
+    for (i = 0; i < neighbour_count; i++)
+    {
+        if (strcmp(sender_port, neighbors[i]) == 0)
+        {
+            break;
+        }
+    }
+    if (i == neighbour_count)
+    {
+        strcpy(neighbors[neighbour_count], sender_port);
+        neighbour_count++;
+    }
+    print_neighbours();
+}
+
+
+int get_sender_cost(char *sender_port)
+{
     int to_sender_cost = 1000000;
     int i;
-    for(i=0;i<ROUTING_TABLE_SIZE;i++){
-        if(strcmp( ROUTING_TABLE[i].destination_port, sender_port )==0){
+    for (i = 0; i < ROUTING_TABLE_SIZE; i++)
+    {
+        if (strcmp(ROUTING_TABLE[i].destination_port, sender_port) == 0)
+        {
             to_sender_cost = ROUTING_TABLE[i].cost;
+            break;
         }
     }
     return to_sender_cost;
 }
 
-int update_table(char *sender_port, struct routing_table_entry *incoming_table, int incoming_table_size){
+int update_table(char *sender_port, struct routing_table_entry *incoming_table, int incoming_table_size)
+{
+    printf("incoming data table: \n");
+    // int i;
+    for (int i = 0; i < incoming_table_size; i++)
+    {
+        printf("%s | %d\n", incoming_table[i].destination_port, incoming_table[i].cost);
+    }
     int change_made = 0;
     int i;
-    for(i=0;i<incoming_table_size;i++){
+    pthread_mutex_lock(&mut);
+
+    for (i = 0; i < incoming_table_size; i++)
+    {
+        if (atoi(incoming_table[i].destination_port) == PORT)
+        {
+            continue;
+        }
+
         int j;
-        for(j=0;j<ROUTING_TABLE_SIZE;j++){
-            if(strcmp(ROUTING_TABLE[j].destination_port,incoming_table[i].destination_port )==0){
+        for (j = 0; j < ROUTING_TABLE_SIZE; j++)
+        {
+            if (strcmp(ROUTING_TABLE[j].destination_port, incoming_table[i].destination_port) == 0)
+            {
                 //get cost of destination i through sender
-                int cost_through_sender = get_sender_cost(sender_port)+incoming_table[i].cost;
-                if(cost_through_sender < ROUTING_TABLE[j].cost){
+                int cost_through_sender = get_sender_cost(sender_port) + incoming_table[i].cost;
+                if (cost_through_sender < ROUTING_TABLE[j].cost)
+                {
                     ROUTING_TABLE[j].cost = cost_through_sender;
-                    strcpy( ROUTING_TABLE[j].next_hop_port, sender_port);
+                    strcpy(ROUTING_TABLE[j].next_hop_port, sender_port);
                     change_made = 1;
                 }
+                break;
             }
         }
         //that means this destination port not found in current table
         //so we should entry
-        if(j==ROUTING_TABLE_SIZE){
+        if (j == ROUTING_TABLE_SIZE)
+        {
             strcpy(ROUTING_TABLE[ROUTING_TABLE_SIZE].destination_port, incoming_table[i].destination_port);
-            ROUTING_TABLE[ROUTING_TABLE_SIZE].cost = get_sender_cost(sender_port)+incoming_table[i].cost;
-            strcpy( ROUTING_TABLE[ROUTING_TABLE_SIZE].next_hop_port, sender_port);
+            ROUTING_TABLE[ROUTING_TABLE_SIZE].cost = get_sender_cost(sender_port) + incoming_table[i].cost;
+            strcpy(ROUTING_TABLE[ROUTING_TABLE_SIZE].next_hop_port, sender_port);
             ROUTING_TABLE_SIZE++;
         }
     }
-    if(change_made==1){
-        print_routing_table();
+
+    //update timers for this sender
+    int k;
+    for(k=0;k<ROUTING_TABLE_SIZE;k++){
+        char * this_entry_next_hop = &ROUTING_TABLE[k].next_hop_port[0];
+        char * this_entry_dest = &ROUTING_TABLE[k].destination_port[0];
+        // strcpy(this_entry_dest,ROUTING_TABLE[k].destination_port);
+        printf("%s and %s comparison result: %d\n",this_entry_dest, sender_port, strcmp(this_entry_dest, sender_port));
+        if(strcmp(this_entry_next_hop, sender_port)==0  || strcmp(this_entry_dest, sender_port)==0){
+            printf("timers updated for sender port: %s\n",sender_port);
+            ROUTING_TABLE[k].expiration_time = 0;
+            ROUTING_TABLE[k].garbage_collection_time = 0;
+        }
+        
     }
+    update_neighbour_list(sender_port);
+
+    print_routing_table();
+
+    pthread_mutex_unlock(&mut);
+
     return change_made;
 }
 
+char *create_string_of_routing_table(char * for_port)
+{
 
-
-char * create_string_of_routing_table(){
-    
     char *whole_data_pointer;
-    
-    char whole_data[100]="";
 
-    
+    char whole_data[100] = "";
+
     snprintf(whole_data, sizeof(whole_data), "from %i#", PORT);
-    
-    int i; 
-    for(i=0;i<ROUTING_TABLE_SIZE;i++){
+
+    int i;
+    for (i = 0; i < ROUTING_TABLE_SIZE; i++)
+    {
+        //to avoid poisson reverse
+        if(strcmp(for_port,&ROUTING_TABLE[i].destination_port[0])==0 || strcmp(for_port,&ROUTING_TABLE[i].next_hop_port[0])==0){
+            continue;
+        }
         strcat(whole_data, ROUTING_TABLE[i].destination_port);
-        strcat(whole_data, "-");    
+        strcat(whole_data, "-");
         char coststr[10];
         sprintf(coststr, "%d", ROUTING_TABLE[i].cost);
         strcat(whole_data, coststr);
         strcat(whole_data, "#");
-        
     }
     whole_data_pointer = whole_data;
     return whole_data_pointer;
 }
 
-void extract_data_and_update_table(char * data){
+
+void extract_data_and_update_table(char *data)
+{
     char data_arr[1000];
 
-    strcpy(data_arr,data);
+    strcpy(data_arr, data);
 
     char *line = strtok(data_arr, "#");
 
-    char *string,*found,*sender_port;
+    char *string, *found, *sender_port;
     string = strdup(line);
-    sender_port = strsep(&string," ");
-    sender_port = strsep(&string,"-");
-    printf("sender-port: %s\n",sender_port);
+    sender_port = strsep(&string, " ");
+    sender_port = strsep(&string, "-");
+    printf("sender-port: %s\n", sender_port);
 
+    // update_neighbour_list(sender_port);
 
     struct routing_table_entry incoming_routing_table[100];
 
     int incoming_tabl_entry_count = 0;
-    
+
     while (line != NULL)
     {
-        
+
         line = strtok(NULL, "#");
         printf("extracted line: %s\n", line);
-        if(line!=NULL){
-            
+        if (line != NULL)
+        {
+
             // char *string,*found;
             string = strdup(line);
-            found = strsep(&string,"-");
+            found = strsep(&string, "-");
             strcpy(incoming_routing_table[incoming_tabl_entry_count].destination_port, found);
-            found = strsep(&string,"-");
+            found = strsep(&string, "-");
 
-            incoming_routing_table[incoming_tabl_entry_count].cost = atoi(found) ; 
+            incoming_routing_table[incoming_tabl_entry_count].cost = atoi(found);
             incoming_tabl_entry_count++;
-
-        } 
-        
-    }
-    printf("incoming data table: \n");
-    int i;
-    for(i=0;i<incoming_tabl_entry_count;i++){
-        printf("%s | %d\n", incoming_routing_table[i].destination_port, incoming_routing_table[i].cost);
+        }
     }
 
-    update_table(sender_port,incoming_routing_table, incoming_tabl_entry_count);
-    return;    
+    update_table(sender_port, incoming_routing_table, incoming_tabl_entry_count);
 
+    return;
 }
-
 
 struct arg_struct
 {
@@ -215,12 +301,11 @@ struct arg_struct2
     int server_fd;
 };
 
-
 struct neighbor
 {
     struct sockaddr_in neighbor_node;
     int neighbor_port;
-    char * data;
+    char data[2000];
 };
 
 void *cli(void *arguments)
@@ -228,34 +313,32 @@ void *cli(void *arguments)
     int client_socket = socket(AF_INET, SOCK_DGRAM, 0);
     struct neighbor *neighbor_def = arguments;
     int client_fd;
-
-    while (1)
+    
+    
+    if ((client_fd = connect(client_socket, (struct sockaddr *)&neighbor_def->neighbor_node, sizeof(neighbor_def->neighbor_node))) < 0)
     {
-
-        if ((client_fd = connect(client_socket, (struct sockaddr *)&neighbor_def->neighbor_node, sizeof(neighbor_def->neighbor_node))) < 0)
-        {
-            continue;
-        }
-
-        printf("Connection established from %d to port %d\n", PORT, neighbor_def->neighbor_port);
-
-        char data[1024];
-        printf("sent-data: %s\n",neighbor_def->data);
-        
-        // send(client_socket, neighbor_def->data, strlen(neighbor_def->data), 0);
-
-        sendto(client_socket, neighbor_def->data, strlen(neighbor_def->data), MSG_CONFIRM, (const struct sockaddr *) &neighbor_def->neighbor_node,  sizeof(neighbor_def->neighbor_node)); 
-        
-        printf("data sent from %d to port %d\n\n", PORT, neighbor_def->neighbor_port);
-        close(client_fd);
-        break;
+        return NULL;
     }
+
+    printf("Connection established from %d to port %d\n", PORT, neighbor_def->neighbor_port);
+    char neighbor_port[5];
+    sprintf(neighbor_port, "%d", neighbor_def->neighbor_port);
+
+    char *data = create_string_of_routing_table(&neighbor_port[0]);
+
+    // send(client_socket, data, strlen(data), 0);        // send(client_socket, data, strlen(data), 0);
+    sendto(client_socket, data, strlen(data), MSG_CONFIRM, (const struct sockaddr *) &neighbor_def->neighbor_node,  sizeof(neighbor_def->neighbor_node));
+
+    printf("data sent from %d to port %d: %s\n\n", PORT, neighbor_def->neighbor_port, data);
+    close(client_fd);
+        
+    
     return NULL;
 }
 
 void *sendingThread(void *arguments)
 {
-    printf("In sending thread!!!!");
+    printf("Sending thread running!!!!\n");
 
     struct arg_struct *args = arguments;
     int sock, this_node_port;
@@ -263,43 +346,29 @@ void *sendingThread(void *arguments)
     this_node_port = args->this_port;
 
     FILE *fptr;
-    char file_name[32];
-    snprintf(file_name, sizeof(char) * 32, "sending-thread-%i.txt", this_node_port);
-    fptr = fopen(file_name, "w");
     
-    fprintf(fptr, "This node port %d\n", this_node_port);
-    printf("This node port %d\n", this_node_port);
-
-    int new_server_fd = socket(AF_INET, SOCK_STREAM, 0);
-
     while (1)
     {
 
         int i;
         pthread_t client_threads[5];
         int client_thread_count = 0;
-        char * data = create_string_of_routing_table();
-        for (i = 0; i < 3; i = i + 1)
+        // char *data = create_string_of_routing_table();
+        // printf("created data from routing table: %s\n", data);
+        for (i = 0; i < neighbour_count; i = i + 1)
         {
-
-            if (all_ports[i] == this_node_port)
-            {
-                continue;
-            }
 
             struct sockaddr_in neighbor_node;
             int neighbor_port;
             int client_fd;
 
-            neighbor_port = all_ports[i];
+            neighbor_port = atoi(neighbors[i]);
+
             neighbor_node.sin_addr.s_addr = INADDR_ANY;
             neighbor_node.sin_family = AF_INET;
             neighbor_node.sin_port = htons(neighbor_port);
 
-            printf("lalallalala\n");
-            printf("\nport %d is trying to connect to port %d\n", this_node_port, neighbor_port);
-            printf("sending data: %s\n", data);
-
+            
             if (inet_pton(AF_INET, "127.0.0.1", &neighbor_node.sin_addr) <= 0)
             {
                 printf("\nInvalid address/ Address not supported \n");
@@ -309,10 +378,7 @@ void *sendingThread(void *arguments)
             struct neighbor *neighbor_def = malloc(sizeof(struct neighbor));
             neighbor_def->neighbor_node = neighbor_node;
             neighbor_def->neighbor_port = neighbor_port;
-            neighbor_def->data = data;
-            
             // strcpy(neighbor_def->data, data);
-
             pthread_create(&client_thread_id, NULL, cli, neighbor_def);
             client_threads[client_thread_count++] = client_thread_id;
         }
@@ -321,7 +387,7 @@ void *sendingThread(void *arguments)
         {
             pthread_join(client_threads[j], NULL);
         }
-        sleep(5);
+        sleep(periodic_timer+get_rand_val());
     }
 
     return NULL;
@@ -342,44 +408,90 @@ void *recievingThread(void *arguments)
     while (1)
     {
 
-        // if (listen(server_fd, 3) < 0)
-        // {
-        //     perror("listen");
-        //     continue;
-        // }
-        // if ((new_socket = accept(server_fd, (struct sockaddr *)&this_node,
-        //                          (socklen_t *)&addrlen)) < 0)
-        // {
-        //     perror("accept");
-        //     continue;
-        // }
-        // printf("accepted\n");
-        // valread = read(new_socket, buffer, 4024);
-        memset(&cliaddr, 0, sizeof(cliaddr)); 
+        memset(&cliaddr, 0, sizeof(cliaddr));
         int len = sizeof(cliaddr);
-        recvfrom(server_fd, (char *)buffer, 4024,  MSG_WAITALL, ( struct sockaddr *) &cliaddr, &len); 
-        printf("\nIncoming data: %s \n", buffer);
+        recvfrom(server_fd, (char *)buffer, 4024,  MSG_WAITALL, ( struct sockaddr *) &cliaddr, &len);
+        printf("\nrecieved data: %s \n", buffer);
         extract_data_and_update_table(buffer);
+        print_neighbours();
         close(new_socket);
     }
 
     return NULL;
 }
 
+void remove_garbage_entry(int position)
+{
+    printf("removing garbage value!!!!\n");
+    int i, j;
+    int routing_table_updated=0,neighbour_list_updated = 0;
+    for (i = 0; i < neighbour_count; i++)
+    {
+
+        if (strcmp( ROUTING_TABLE[j].destination_port, neighbors[i])==0 )
+        {
+            strcpy(neighbors[i], neighbors[i+1]);
+            neighbour_list_updated=1;
+        }
+    }
+    if(neighbour_list_updated==1)
+        neighbour_count--;
+    
+    
+    for (j = position; j < ROUTING_TABLE_SIZE; j++)
+    {
+        ROUTING_TABLE[j] = ROUTING_TABLE[j + 1];
+        routing_table_updated=1;
+    }
+    if(routing_table_updated==1)
+        ROUTING_TABLE_SIZE--;
+}
+
+void *timer(void *arguments)
+{
+    while (1)
+    {
+        pthread_mutex_lock(&mut);
+
+        int i;
+        for (i = 0; i < ROUTING_TABLE_SIZE; i++)
+        {
+            if (ROUTING_TABLE[i].garbage_collection_time >= entry_garbage_thresh)
+            {
+                remove_garbage_entry(i);
+                i--; //since left shifted all the element deleting i-th element. So now in i position there is new element.
+            }
+            else if (ROUTING_TABLE[i].expiration_time >= entry_expire_thresh)
+            {
+                ROUTING_TABLE[i].cost = 16;
+                ROUTING_TABLE[i].garbage_collection_time++;
+            }
+            else
+            {
+                ROUTING_TABLE[i].expiration_time++;
+            }
+        }
+        // print_routing_table();
+        // print_neighbours();
+        pthread_mutex_unlock(&mut);
+
+        sleep(1);
+    }
+}
+
 int main(int argc, char *argv[])
 {
-    sleep(3);
-
-    int all_ports[] = {8088, 8089, 8090};
+    // sleep(5);
 
     int id = atoi(argv[1]);
+    // char *ip = argv[2];
     int port = atoi(argv[2]);
     PORT = port;
 
     printf("node-id: %d, port: %d\n", id, port);
 
     initialization_routing_table();
-    // char *data = create_string_of_routing_table();
+    char *data = create_string_of_routing_table("0000");
     // printf("data created from table: %s\n", data);
     // extract_data_and_update_table(data);
 
@@ -390,7 +502,7 @@ int main(int argc, char *argv[])
     //setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))
     struct sockaddr_in node, neighbor_node;
     struct sockaddr_in neighbors[5];
-
+    // node.sin_addr.s_addr = inet_addr(ip);
     node.sin_addr.s_addr = INADDR_ANY;
     node.sin_family = AF_INET;
     node.sin_port = htons(port);
@@ -398,14 +510,14 @@ int main(int argc, char *argv[])
     if (bind(server_fd, (struct sockaddr *)&node, sizeof(node)) < 0)
     {
         perror("bind failed\n");
-        //exit(EXIT_FAILURE);
+        exit(EXIT_FAILURE);
     }
     else
     {
         printf("bind successful %d\n", port);
     }
 
-    pthread_t sending_thread_id, recieving_thread_id;
+    pthread_t sending_thread_id, recieving_thread_id, timer_thread_id;
     int i;
 
     struct arg_struct *args = malloc(sizeof(struct arg_struct));
@@ -418,6 +530,9 @@ int main(int argc, char *argv[])
     args2->server_fd = server_fd;
     pthread_create(&recieving_thread_id, NULL, recievingThread, args2);
 
+    pthread_create(&timer_thread_id, NULL, timer, NULL);
+    
     pthread_join(sending_thread_id, NULL);
     pthread_join(recieving_thread_id, NULL);
+    pthread_join(timer_thread_id, NULL);
 }
