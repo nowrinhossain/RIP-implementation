@@ -129,7 +129,7 @@ void update_neighbour_list(char *sender_port)
         strcpy(neighbors[neighbour_count], sender_port);
         neighbour_count++;
     }
-    print_neighbours();
+    // print_neighbours();
 }
 
 
@@ -170,7 +170,11 @@ int update_table(char *sender_port, struct routing_table_entry *incoming_table, 
         int j;
         for (j = 0; j < ROUTING_TABLE_SIZE; j++)
         {
-            if (strcmp(ROUTING_TABLE[j].destination_port, incoming_table[i].destination_port) == 0)
+            // printf("%s and %s comparison result: %d\n",ROUTING_TABLE[j].next_hop_port, sender_port, strcmp(ROUTING_TABLE[j].next_hop_port, sender_port));
+        
+            //update entry if an existing network cost is less through sender cost
+            if ((strcmp(ROUTING_TABLE[j].destination_port, incoming_table[i].destination_port) == 0) &&
+                (strcmp(ROUTING_TABLE[j].next_hop_port, sender_port) != 0))
             {
                 //get cost of destination i through sender
                 int cost_through_sender = get_sender_cost(sender_port) + incoming_table[i].cost;
@@ -182,6 +186,14 @@ int update_table(char *sender_port, struct routing_table_entry *incoming_table, 
                 }
                 break;
             }
+            //if this entry's next hop is sender then update the cost according to the sender cost
+            else if((strcmp(ROUTING_TABLE[j].destination_port, incoming_table[i].destination_port) == 0) &&
+                (strcmp(ROUTING_TABLE[j].next_hop_port, sender_port) == 0))
+            {
+                ROUTING_TABLE[j].cost = get_sender_cost(sender_port) + incoming_table[i].cost;
+                break;
+            }
+
         }
         //that means this destination port not found in current table
         //so we should entry
@@ -200,9 +212,9 @@ int update_table(char *sender_port, struct routing_table_entry *incoming_table, 
         char * this_entry_next_hop = &ROUTING_TABLE[k].next_hop_port[0];
         char * this_entry_dest = &ROUTING_TABLE[k].destination_port[0];
         // strcpy(this_entry_dest,ROUTING_TABLE[k].destination_port);
-        printf("%s and %s comparison result: %d\n",this_entry_dest, sender_port, strcmp(this_entry_dest, sender_port));
-        if(strcmp(this_entry_next_hop, sender_port)==0  || strcmp(this_entry_dest, sender_port)==0){
-            printf("timers updated for sender port: %s\n",sender_port);
+        // printf("%s and %s comparison result: %d\n",this_entry_dest, sender_port, strcmp(this_entry_dest, sender_port));
+        if((strcmp(this_entry_next_hop, sender_port)==0  || strcmp(this_entry_dest, sender_port)==0) && ROUTING_TABLE[k].cost<16){
+            // printf("timers updated for sender port: %s\n",sender_port);
             ROUTING_TABLE[k].expiration_time = 0;
             ROUTING_TABLE[k].garbage_collection_time = 0;
         }
@@ -269,7 +281,7 @@ void extract_data_and_update_table(char *data)
     {
 
         line = strtok(NULL, "#");
-        printf("extracted line: %s\n", line);
+        // printf("extracted line: %s\n", line);
         if (line != NULL)
         {
 
@@ -413,7 +425,7 @@ void *recievingThread(void *arguments)
         recvfrom(server_fd, (char *)buffer, 4024,  MSG_WAITALL, ( struct sockaddr *) &cliaddr, &len);
         printf("\nrecieved data: %s \n", buffer);
         extract_data_and_update_table(buffer);
-        print_neighbours();
+        // print_neighbours();
         close(new_socket);
     }
 
