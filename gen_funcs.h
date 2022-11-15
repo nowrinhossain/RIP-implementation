@@ -67,13 +67,13 @@ char *get_32_bit_bin(int val)
 
 char *dec_ip_to_bin_ip(char *dec_ip)
 {
-    printf("given ip: %s\n", dec_ip);
+    // printf("given ip: %s\n", dec_ip);
     char *words[4];
     char binary_ip[50] = "";
 
     char *token = strtok(dec_ip, ".");
     char *temp = get_8_bit_bin(atoi(token));
-    printf("toke: %s bin: %s\n", token, temp);
+    // printf("toke: %s bin: %s\n", token, temp);
     strcat(binary_ip, temp);
 
     int i = 1;
