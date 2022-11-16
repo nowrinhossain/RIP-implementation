@@ -31,6 +31,7 @@ struct router
     int id;
     char ip[20];
     int port;
+    int sending_port;
 };
 
 
@@ -47,8 +48,9 @@ struct routing_table_entry_v2
 struct router *ROUTER;
 struct routing_table_entry_v2 ROUTING_TABLE_V2[10000];
 int ROUTING_TABLE_SIZE = 0;
-struct router NEIGHBOR_ROUTERS[1000];
-int NEIGHBOR_ROUTERS_COUNT;
+struct router ROUTERS_CONF[1000];
+int ROUTERS_COUNT;
+
 struct sending_thread_arg
 {
     int sock;
@@ -79,52 +81,68 @@ void read_config_file(int router_id){
     char line[50];
 
     int entry_count = 0;
-    NEIGHBOR_ROUTERS_COUNT = 0;
+    ROUTERS_COUNT = 0;
 
     while (fgets(line, 50, fptr))
     {
         char *token = strtok(line, " ");
         int id = atoi(token);
         if(id!=router_id){
-            char *words[3];
+            char *words[4];
             int i=0;
-            words[i++]=token;
-
             while (token != NULL)
             {
-                token = strtok(NULL, " ");
                 words[i++] = token;   
+                token = strtok(NULL, " \n");
             }
-            NEIGHBOR_ROUTERS[entry_count].id = id;
-            strcpy(NEIGHBOR_ROUTERS[entry_count].ip, words[1]);
-            NEIGHBOR_ROUTERS[entry_count].port = atoi(words[2]);
+            ROUTERS_CONF[entry_count].id = id;
+            strcpy(ROUTERS_CONF[entry_count].ip, words[1]);
+            ROUTERS_CONF[entry_count].port = atoi(words[2]);
+            ROUTERS_CONF[entry_count].sending_port = atoi(words[3]);
             entry_count++;
         }else{
-            char *words[3];
+            char *words[4];
             int i=0;
-            words[i++]=token;
-
+            
             while (token != NULL)
             {
-                token = strtok(NULL, " ");
-                words[i++] = token;   
+                words[i++]=token;
+                //printf("token: %s\n", token);
+                token = strtok(NULL, " \n");
+                  
             }
             
-
             ROUTER->id = id;
             strcpy(ROUTER->ip, words[1]);
             ROUTER->port = atoi(words[2]);
+            ROUTER->sending_port = atoi(words[3]);
 
         }
         
     }
-    printf("From config file: id-%d ip-%s port-%d",ROUTER->id, ROUTER->ip, ROUTER->port);
+    ROUTERS_COUNT = entry_count;
+    printf("From config file: id-%d ip-%s port-%d\n",ROUTER->id, ROUTER->ip, ROUTER->port);
 }
 
 int get_port_by_ip(char * ip){
-    for(int i=0;i<NEIGHBOR_ROUTERS_COUNT; i++){
-        if(strcmp( NEIGHBOR_ROUTERS[i].ip, ip)==0){
-            return NEIGHBOR_ROUTERS[i].port;
+    
+    for(int i=0;i<ROUTERS_COUNT; i++){
+        // printf("ip-%s and ip-%s comparison %d\n",ip, ROUTERS_CONF[i].ip,strcmp(ROUTERS_CONF[i].ip, ip));
+        if(strcmp( ROUTERS_CONF[i].ip, ip)==0){
+            return ROUTERS_CONF[i].port;
+        }
+    }
+    printf("No corresponsind port found for ip %s\n", ip);
+    return 0;
+}
+
+char * get_ip_by_sender_port(int sender_port){
+    char * ip_ptr;
+    for(int i=0;i<ROUTERS_COUNT; i++){
+        // printf("ip-%s and ip-%s comparison %d\n",ip, ROUTERS_CONF[i].ip,strcmp(ROUTERS_CONF[i].ip, ip));
+        if(ROUTERS_CONF[i].sending_port == sender_port){
+            ip_ptr = ROUTERS_CONF[i].ip;
+            return ip_ptr;
         }
     }
 }
@@ -171,7 +189,7 @@ void print_routing_table_v2()
     for (i = 0; i < ROUTING_TABLE_SIZE; i++)
     {
         fprintf(fptr, "%s |   %d    |      %s      |  %d  |  %d \n", ROUTING_TABLE_V2[i].destination_net, ROUTING_TABLE_V2[i].cost, ROUTING_TABLE_V2[i].next_hop_ip, ROUTING_TABLE_V2[i].expiration_time, ROUTING_TABLE_V2[i].garbage_collection_time);
-        printf("%s |   %d    |      %s      |  %d  |  %d \n", ROUTING_TABLE_V2[i].destination_net, ROUTING_TABLE_V2[i].cost, ROUTING_TABLE_V2[i].next_hop_ip, ROUTING_TABLE_V2[i].expiration_time, ROUTING_TABLE_V2[i].garbage_collection_time);
+        printf("%s |   %d    |  %s  |  %d  |  %d \n", ROUTING_TABLE_V2[i].destination_net, ROUTING_TABLE_V2[i].cost, ROUTING_TABLE_V2[i].next_hop_ip, ROUTING_TABLE_V2[i].expiration_time, ROUTING_TABLE_V2[i].garbage_collection_time);
     }
     fprintf(fptr, "\n\n");
     printf("\n\n");
@@ -206,12 +224,11 @@ void initial_neighbors(){
         char *words[3];
         int i = 0;
         char *token = strtok(line, " ");
-        words[i++] = token;
         while (token != NULL)
         {
+            words[i++] = token;
             // printf("%d %s\n", i, token); //printing each token
             token = strtok(NULL, " \n");
-            words[i++] = token;
         }
         strcpy(neighbors[neighbour_count++], words[2]);
         
@@ -289,7 +306,7 @@ void update_neighbour_list(char *sender_port)
 
 int get_sender_cost_v2(char *sender)
 {
-    int to_sender_cost = 1000000;
+    int to_sender_cost = 16;
     int i;
     for (i = 0; i < ROUTING_TABLE_SIZE; i++)
     {
@@ -307,7 +324,6 @@ int get_sender_cost_v2(char *sender)
 
 void update_table_v2(char *sender, struct routing_table_entry_v2 *incoming_table, int incoming_table_size)
 {
-    printf("incoming data table: \n");
     
     int i;
     pthread_mutex_lock(&mut);
@@ -322,14 +338,16 @@ void update_table_v2(char *sender, struct routing_table_entry_v2 *incoming_table
         int j;
         for (j = 0; j < ROUTING_TABLE_SIZE; j++)
         {
-            // printf("%s and %s comparison result: %d\n",ROUTING_TABLE[j].next_hop_port, sender_port, strcmp(ROUTING_TABLE[j].next_hop_port, sender_port));
+            // printf("%s and %s comparison result: %d\n",ROUTING_TABLE_V2[j].next_hop_ip, incoming_table[i].next_hop_ip, strcmp(ROUTING_TABLE_V2[j].next_hop_ip, incoming_table[i].next_hop_ip));
         
             //sender knows a shorter route for a given destination
             if ((strcmp(ROUTING_TABLE_V2[j].destination_net, incoming_table[i].destination_net) == 0) &&
                 (strcmp(ROUTING_TABLE_V2[j].next_hop_ip, sender) != 0))
             {
                 
-                int cost_through_sender = get_sender_cost_v2(sender) + incoming_table[i].cost;
+                // int cost_through_sender = get_sender_cost_v2(sender) + incoming_table[i].cost;
+                int cost_through_sender = 1 + incoming_table[i].cost;
+
                 if (cost_through_sender < ROUTING_TABLE_V2[j].cost)
                 {
                     ROUTING_TABLE_V2[j].cost = cost_through_sender;
@@ -341,7 +359,9 @@ void update_table_v2(char *sender, struct routing_table_entry_v2 *incoming_table
             else if((strcmp(ROUTING_TABLE_V2[j].destination_net, incoming_table[i].destination_net) == 0) &&
                 (strcmp(ROUTING_TABLE_V2[j].next_hop_ip, sender) == 0))
             {
-                int cost = get_sender_cost_v2(sender) + incoming_table[i].cost;
+                // int cost = get_sender_cost_v2(sender) + incoming_table[i].cost;
+                int cost = 1 + incoming_table[i].cost;
+                
                 if(cost>16)cost=16;
                 ROUTING_TABLE_V2[j].cost = cost;
                 break;
@@ -353,7 +373,9 @@ void update_table_v2(char *sender, struct routing_table_entry_v2 *incoming_table
         if (j == ROUTING_TABLE_SIZE)
         {
             strcpy(ROUTING_TABLE_V2[ROUTING_TABLE_SIZE].destination_net, incoming_table[i].destination_net);
-            ROUTING_TABLE_V2[ROUTING_TABLE_SIZE].cost = get_sender_cost_v2(sender) + incoming_table[i].cost;
+            // ROUTING_TABLE_V2[ROUTING_TABLE_SIZE].cost = get_sender_cost_v2(sender) + incoming_table[i].cost;
+            ROUTING_TABLE_V2[ROUTING_TABLE_SIZE].cost = 1 + incoming_table[i].cost;
+            
             strcpy(ROUTING_TABLE_V2[ROUTING_TABLE_SIZE].next_hop_ip, sender);
             ROUTING_TABLE_SIZE++;
         }
@@ -372,6 +394,8 @@ void update_table_v2(char *sender, struct routing_table_entry_v2 *incoming_table
     }
     update_neighbour_list(sender);
 
+    printf("Updated table:\n");
+
     print_routing_table_v2();
 
     pthread_mutex_unlock(&mut);
@@ -380,7 +404,7 @@ void update_table_v2(char *sender, struct routing_table_entry_v2 *incoming_table
 }
 
 
-char * create_rip_response_packet(char * for_neighbor){
+char * create_rip_response_packet(char * neighbor_ip){
     char packet[100000] = "";
     strcat(packet, command);
     strcat(packet, version);
@@ -390,13 +414,15 @@ char * create_rip_response_packet(char * for_neighbor){
     strcat(packet, all_zeros);
     strcat(packet, "\n");
 
-    // printf("packet:\n%s\n",packet);
+    // printf("------------------------------------------\n");
+    // print_routing_table_v2();
+    // printf("------------------------------------------\n");
 
     int i;
     for (i = 0; i < ROUTING_TABLE_SIZE; i++)
     {
         //to avoid poisson reverse
-        if(strcmp(for_neighbor, &ROUTING_TABLE_V2[i].next_hop_ip[0])==0){
+        if(strcmp(neighbor_ip, &ROUTING_TABLE_V2[i].next_hop_ip[0])==0){
             continue;
         }
 
@@ -411,10 +437,11 @@ char * create_rip_response_packet(char * for_neighbor){
     
     }
     char * packet_ptr = packet;
+    // printf("created data packet:\n%s\n",packet);
     return packet_ptr;
 }
 
-void extract_data_and_update_table_v2(char * packet){
+void extract_data_and_update_table_v2(char *sender, char * packet){
     char *line = strtok(packet, "\n");
     line = strtok(NULL, "\n");
     // printf("extracted-line: %s\n", line);
@@ -444,10 +471,14 @@ void extract_data_and_update_table_v2(char * packet){
         
     }
 
+    printf("\nincoming table:\n");
     for(int i=0;i<incoming_tabl_entry_count;i++){
         printf("%s | %d\n", incoming_routing_table[i].destination_net, incoming_routing_table[i].cost);
-
     }
+
+    update_table_v2(sender, incoming_routing_table, incoming_tabl_entry_count);
+
+    return;
     
 }
 
@@ -463,10 +494,10 @@ void *cli(void *arguments)
     // // binding client with that port
     my_addr.sin_family = AF_INET;
     my_addr.sin_addr.s_addr = INADDR_ANY;
-    my_addr.sin_port = htons(PORT);
+    my_addr.sin_port = htons(ROUTER->sending_port);
 
     if (bind(client_socket, (struct sockaddr*) &my_addr, sizeof(struct sockaddr_in)) == 0)
-        printf("\n");
+        printf("bind successfull for sending socket\n");
     else
         perror("Unable to bind");
 
@@ -484,20 +515,22 @@ void *cli(void *arguments)
     
     if ((client_fd = connect(client_socket, (struct sockaddr *)&neighbor_node, sizeof(neighbor_def->neighbor_node))) < 0)
     {
+        close(client_fd);
+        close(client_socket);
         return NULL;
     }
 
-    printf("Connection established from %d to port %d\n", PORT, neighbor_port_num);
-    char neighbor_port[5];
-    sprintf(neighbor_port, "%d", neighbor_port_num);
+    printf("Connection established from %s to %s\n", ROUTER->ip, neighbor_def->neighbor_ip);
+    // char neighbor_port[5];
+    // sprintf(neighbor_port, "%d", neighbor_port_num);
 
-    // char *data = create_string_of_routing_table(&neighbor_port[0]);
-    char *data = "Hello World!!!!!";
+    char *data = create_rip_response_packet(neighbor_def->neighbor_ip);
 
 
     sendto(client_socket, data, strlen(data), MSG_CONFIRM, (const struct sockaddr *) &neighbor_node,  sizeof(neighbor_node));
-    printf("data sent from %d to port %d: %s\n\n", PORT, neighbor_port_num, data);
+    printf("data sent from %s to %s\n\n", ROUTER->ip, neighbor_def->neighbor_ip);
     close(client_fd);
+    close(client_socket);
         
     return NULL;
 }
@@ -525,24 +558,24 @@ void *sendingThread(void *arguments)
 
             int neighbor_port;
             
-            // neighbor_port = atoi(neighbors[i]);
-
             pthread_t client_thread_id;
             
             struct neighbor *neighbor_def = malloc(sizeof(struct neighbor));
-            // neighbor_def->neighbor_port = neighbor_port;
+            
             strcpy( neighbor_def->neighbor_ip, neighbors[i]);
-            printf("neighbor ip: ----%s\n", neighbor_def->neighbor_ip);
+            // printf("neighbor ip: ----%s\n", neighbor_def->neighbor_ip);
             
             pthread_create(&client_thread_id, NULL, cli, neighbor_def);
             
             client_threads[client_thread_count++] = client_thread_id;
+
+            pthread_join(client_thread_id, NULL);
         }
-        int j;
-        for (j = 0; j < client_thread_count; j++)
-        {
-            pthread_join(client_threads[j], NULL);
-        }
+        // int j;
+        // for (j = 0; j < client_thread_count; j++)
+        // {
+        //     pthread_join(client_threads[j], NULL);
+        // }
         sleep(periodic_timer+get_rand_val());
     }
 
@@ -552,11 +585,11 @@ void *sendingThread(void *arguments)
 void *recievingThread(void *arguments)
 {
 
-    struct sockaddr_in this_node;
+    
     struct recieving_thread_arg *args = arguments;
-    int server_fd, new_socket;
-    this_node = args->this_node;
-    server_fd = args->server_fd;
+    
+    struct sockaddr_in this_node = args->this_node;
+    int server_fd = args->server_fd;
     int valread, addrlen = sizeof(this_node);
     char buffer[1024] = {0};
     struct sockaddr_in cliaddr;
@@ -567,10 +600,12 @@ void *recievingThread(void *arguments)
         memset(&cliaddr, 0, sizeof(cliaddr));
         int len = sizeof(cliaddr);
         recvfrom(server_fd, (char *)buffer, 4024,  MSG_WAITALL, ( struct sockaddr *) &cliaddr, &len);
-        printf("\nrecieved data from %d: %s \n", ntohs(cliaddr.sin_port), buffer);
-        // extract_data_and_update_table(buffer);
+        char * sender = get_ip_by_sender_port(ntohs(cliaddr.sin_port));
+        printf("\nrecieved data from %s: \n", sender);
+        extract_data_and_update_table_v2(sender, buffer);
+        
         // print_neighbours();
-        close(new_socket);
+        
     }
 
     return NULL;
@@ -646,16 +681,22 @@ int main(int argc, char *argv[])
     PORT = port;
 
     printf("node-id: %d, port: %d\n", id, port);
+
+    
     read_config_file(id);
     initialization_routing_table_v2();
+    
     initial_neighbors();
+
     char *data = create_rip_response_packet("8088");
-    printf("data created from table:\n%s\n", data);
-    extract_data_and_update_table_v2(data);
+    // printf("data created from table:\n%s\n", data);
+
+    
+    
+    // extract_data_and_update_table_v2("0000",data);
     // extract_data_and_update_table(data);
 
-    char buffer[1024] = {0};
-    int new_socket, valread, client_fd;
+    int new_socket, client_fd;
     int opt = 1;
     int server_fd = socket(AF_INET, SOCK_DGRAM, 0);
     struct sockaddr_in node, neighbor_node;
@@ -687,6 +728,7 @@ int main(int argc, char *argv[])
     args2->this_node = node;
     args2->server_fd = server_fd;
 
+    
     pthread_create(&sending_thread_id, NULL, sendingThread, args);
     pthread_create(&recieving_thread_id, NULL, recievingThread, args2);
     pthread_create(&timer_thread_id, NULL, timer_v2, NULL);
